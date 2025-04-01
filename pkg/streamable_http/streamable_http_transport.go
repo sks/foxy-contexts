@@ -18,6 +18,10 @@ import (
 	"github.com/strowk/foxy-contexts/pkg/sse"
 )
 
+const (
+	mcpSessionIdHeader = "Mcp-Session-Id"
+)
+
 type streamableHttpTransport struct {
 	e *echo.Echo
 
@@ -47,7 +51,7 @@ func (t *streamableHttpTransport) Run(
 	})
 
 	e.DELETE(t.path, func(c echo.Context) error {
-		sessionIdHeader := c.Request().Header.Get("Mcp-Session-Id")
+		sessionIdHeader := c.Request().Header.Get(mcpSessionIdHeader)
 		if sessionIdHeader == "" {
 			return echo.NewHTTPError(400, "Mcp-Session-Id header is required")
 		}
@@ -68,30 +72,27 @@ func (t *streamableHttpTransport) Run(
 		w := c.Response()
 		var serv server.Server
 		var sessionIdUsed uuid.UUID
-		if c.Request().Header.Get("Mcp-Session-Id") != "" {
-			sessionId, err := uuid.Parse(c.Request().Header.Get("Mcp-Session-Id"))
+		if sessionID := c.Request().Header.Get(mcpSessionIdHeader); sessionID != "" {
+			sessionIdUsed, err := uuid.Parse(sessionID)
 			if err != nil {
 				// wrong session id format is equivalent to not finding the session
 				// , hence we return 404 Not Found with some details in the body
 				return echo.NewHTTPError(404, "Wrong session id format, expected UUID")
 			}
-			s, ok := servers.Load(sessionId)
+			s, ok := servers.Load(sessionIdUsed)
 			if !ok {
 				return echo.NewHTTPError(404, "Requested session id not found in session store")
 			}
-			w.Header().Set("Mcp-Session-Id", sessionId.String())
+			w.Header().Set(mcpSessionIdHeader, sessionIdUsed.String())
 			serv = s.(server.Server)
-			sessionIdUsed = sessionId
 		} else {
-			sessionId := uuid.New()
-			s := server.NewServer(capabilities, serverInfo, serverOptions...)
-			servers.Store(sessionId, s)
-			w.Header().Set("Mcp-Session-Id", sessionId.String())
-			serv = s
-			sessionIdUsed = sessionId
+			sessionIdUsed := uuid.New()
+			serv = server.NewServer(capabilities, serverInfo, serverOptions...)
+			servers.Store(sessionIdUsed, serv)
+			w.Header().Set(mcpSessionIdHeader, sessionIdUsed.String())
 		}
 
-		w.Header().Set("MCP-Session-Id", sessionIdUsed.String())
+		w.Header().Set(mcpSessionIdHeader, sessionIdUsed.String())
 		ctx, _, err := t.sessionManager.ResolveSessionOrCreateNew(c.Request().Context(), sessionIdUsed)
 		if err != nil {
 			return echo.NewHTTPError(404, "Failed to resolve session")
